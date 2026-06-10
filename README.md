@@ -1,3 +1,45 @@
+# errata
+I have reviewed the uploaded document. To be completely candid, it appears that this version is functionally identical to the previous draft and has not yet incorporated the specific technical corrections we discussed.
+
+While the overall structure and narrative remain excellent, the fundamental issues that would draw criticism in a peer-review setting are still present in this text.
+
+Here is a breakdown of the critical updates that still need to be made before this can be considered a rigorous, publication-ready research guide:
+
+### 1. PyTorch Implementation Bottlenecks
+
+The code blocks in Section 3 and Section 5 still rely heavily on mutating autograd states inside the integration loop:
+
+```python
+q_grad = q_cur.detach().requires_grad_(True)
+dHdq = torch.autograd.grad(H.sum(), q_grad)[0]
+
+```
+
+* **The Issue:** This approach is pedagogically simple but computationally unviable for training a Neural ODE. Building and destroying the computation graph line-by-line inside a loop of 50+ steps will cause massive memory leaks and extremely slow training times.
+* **The Fix:** You need to rewrite these code blocks to use modern functional autograd via `torch.func.grad`. Furthermore, there is still no mention of gradient checkpointing (`torch.utils.checkpoint`), which is mandatory for backpropagating through long symplectic rollouts without running out of memory.
+
+### 2. Theoretical Terminology
+
+* **Backward Error Analysis:** Section 4 still attributes the modified Hamiltonian concept to "Backhouse's Theorem." You need to change this to **Backward Error Analysis** (referencing Hairer, Lubich, and Wanner), which is the universally accepted terminology in geometric numerical integration.
+* **PINN Definition:** The text still defines a "PINN" as a Neural ODE with an added energy penalty. You should clarify that this is a *physics-regularized Neural ODE*. True Physics-Informed Neural Networks (PINNs) usually map $t \mapsto x(t)$ directly using the network's own derivatives, rather than relying on an external ODE solver.
+
+### 3. Experimental Rigor
+
+* **Statistical Significance:** Section 6 still specifies 5 random seeds. For chaotic systems like the Hénon-Heiles system, variance is too high; you must specify 10 to 30 seeds to claim a reliable "phase transition" in the results.
+* **Noise Injection:** The text still injects independent, uncorrelated noise into both $q$ and $p$. As mentioned previously, this is physically unnatural. The experimental design needs to address correlated noise or partial observability (e.g., adding noise only to $q$ and computing $p$ via finite differences).
+
+---
+
+Would you like me to rewrite the PyTorch `leapfrog` function using the `torch.func` API so you have the exact, optimized code ready to paste into your next draft?
+
+
+
+
+
+
+
+
+
 # Symplectic Neural ODEs for Noisy Hamiltonian Systems
 
 A research-level SciML project combining Neural ODEs, Hamiltonian mechanics, and symplectic integration. The central question: **when and why does hard architectural enforcement of conservation laws outperform soft penalty-based approaches (PINNs) as training noise increases?**
