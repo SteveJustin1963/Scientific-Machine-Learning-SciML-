@@ -1,7 +1,4 @@
 # errata
-I have reviewed the uploaded document. To be completely candid, it appears that this version is functionally identical to the previous draft and has not yet incorporated the specific technical corrections we discussed.
-
-While the overall structure and narrative remain excellent, the fundamental issues that would draw criticism in a peer-review setting are still present in this text.
 
 Here is a breakdown of the critical updates that still need to be made before this can be considered a rigorous, publication-ready research guide:
 
@@ -29,8 +26,8 @@ dHdq = torch.autograd.grad(H.sum(), q_grad)[0]
 * **Noise Injection:** The text still injects independent, uncorrelated noise into both $q$ and $p$. As mentioned previously, this is physically unnatural. The experimental design needs to address correlated noise or partial observability (e.g., adding noise only to $q$ and computing $p$ via finite differences).
 
 ---
-
-Would you like me to rewrite the PyTorch `leapfrog` function using the `torch.func` API so you have the exact, optimized code ready to paste into your next draft?
+next
+we should rewrite the PyTorch `leapfrog` function using the `torch.func` API to get exact, optimized code 
 
 
 
