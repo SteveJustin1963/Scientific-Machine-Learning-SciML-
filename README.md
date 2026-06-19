@@ -2565,4 +2565,919 @@ The symplectic NN you read about is a textbook SciML example: it knows Hamiltoni
 a physicist can argue with. That's what makes it "scientific."
 
 
+# Math Inventory: Symplectic Neural ODEs Project
+
+## 1. Core Variational Mechanics
+
+### Lagrangian & Euler-Lagrange
+$$L(q,\dot{q},t) = T(q,\dot{q}) - V(q)$$
+$$\frac{d}{dt}\frac{\partial L}{\partial \dot{q}_i} - \frac{\partial L}{\partial q_i} = 0$$
+
+### Legendre Transform
+$$p_i \equiv \frac{\partial L}{\partial \dot{q}_i}$$
+$$H(q,p,t) \equiv \sum_i p_i \dot{q}_i - L(q,\dot{q},t)$$
+
+### Worked Examples
+- Harmonic oscillator: $H = \frac{p^2}{2m} + \frac{1}{2}kq^2$
+- Pendulum: $H = \frac{p_\theta^2}{2m\ell^2} + mg\ell(1-\cos\theta)$
+
+---
+
+## 2. Hamilton's Equations (Core Engine)
+
+### Canonical Form
+$$\dot{q}_i = \frac{\partial H}{\partial p_i}, \quad \dot{p}_i = -\frac{\partial H}{\partial q_i}, \quad \frac{\partial H}{\partial t} = -\frac{\partial 
+L}{\partial t}$$
+
+### Compact Symplectic Form
+$$\dot{x} = J\nabla H(x), \quad x = \begin{pmatrix} q \\ p \end{pmatrix}, \quad J = \begin{pmatrix} 0 & I \\ -I & 0 \end{pmatrix}$$
+
+### Key Identity
+$$J^2 = -I, \quad J^{-1} = -J, \quad J^T = -J$$
+
+### Hamiltonian Vector Field (Geometric Definition)
+$$\omega(X_H, \cdot) = dH \quad\Longrightarrow\quad \dot{x} = J^{-1}\nabla H$$
+
+---
+
+## 3. Symplectic Geometry
+
+### Symplectic 2-Form
+$$\omega = \sum_{i=1}^n dp_i \wedge dq_i$$
+
+In coordinates: $\omega(v,w) = v^T J w$
+
+### Required Properties
+- **Skew-symmetric:** $\omega(v,w) = -\omega(w,v)$
+- **Non-degenerate:** $\omega(v,\cdot)=0 \Rightarrow v=0$
+- **Closed:** $d\omega = 0$
+
+### Symplecticity Condition (Continuous & Discrete)
+$$\phi_t^*\omega = \omega \quad\Longleftrightarrow\quad (D\phi_t)^T J (D\phi_t) = J$$
+
+### Cartan's Magic Formula (Liouville's Theorem)
+$$\frac{d}{dt}\phi_t^*\omega = \phi_t^*(\mathcal{L}_{X_H}\omega) = \phi_t^*(d\iota_{X_H}\omega + \iota_{X_H}\underbrace{d\omega}_{=0}) = 0$$
+
+---
+
+## 4. Poisson Brackets & Symplectic Structure
+
+### Definition
+$$\{f,g\} = \nabla f^T J \nabla g = \sum_{i=1}^n \left(\frac{\partial f}{\partial q_i}\frac{\partial g}{\partial p_i} - \frac{\partial f}{\partial 
+p_i}\frac{\partial g}{\partial q_i}\right)$$
+
+### Hamilton's Equations in Poisson Form
+$$\dot{q}_i = \{q_i, H\}, \quad \dot{p}_i = \{p_i, H\}$$
+
+### Conservation Law (any function $f$)
+$$\frac{df}{dt} = \{f,H\}$$
+$$\{H,H\} = 0 \quad\Longrightarrow\quad \frac{dH}{dt}=0 \text{ (energy conservation)}$$
+
+---
+
+## 5. Leapfrog Integrator (Störmer-Verlet)
+
+### Discrete Lagrangian
+$$L_d(q_k, q_{k+1}, h) = h \cdot L\!\left(\frac{q_k + q_{k+1}}{2}, \frac{q_{k+1} - q_k}{h}\right)$$
+
+### Discrete Stationarity $\partial S_d / \partial q_k = 0$
+$$m\frac{q_{k+1} - 2q_k + q_{k-1}}{h^2} = -V'\!\left(\frac{q_k + q_{k+1}}{2}\right)$$
+
+### Leapfrog Update (General Hamiltonian)
+$$\boxed{\begin{aligned}
+p_{n+1/2} &= p_n - \frac{h}{2}\,\frac{\partial H}{\partial q}(q_n) \\
+q_{n+1} &= q_n + h\,\frac{\partial H}{\partial p}(p_{n+1/2}) \\
+p_{n+1} &= p_{n+1/2} - \frac{h}{2}\,\frac{\partial H}{\partial q}(q_{n+1})
+\end{aligned}}$$
+
+### Lie Splitting Form (Vector Field Split)
+$$\Phi_h = \phi_{h/2}^V \circ \phi_h^T \circ \phi_{h/2}^V$$
+
+where
+- $\phi_h^T$: $(q,p) \mapsto (q+h\,T'(p),\,p)$ (drift, shear in $q$)
+- $\phi_h^V$: $(q,p) \mapsto (q,\,p-h\,V'(q))$ (kick, shear in $p$)
+
+### Forced Leapfrog (with control torque $\tau$)
+$$p_{n+1/2} = p_n - \tfrac{h}{2}\partial_q H + \tfrac{h}{2}\tau$$
+$$q_{n+1} = q_n + h\,M(q)^{-1}\,p_{n+1/2}$$
+
+---
+
+## 6. Higher-Order Symplectic Integrators
+
+### Yoshida 4th-Order Composition
+$$\Phi_h^{(4)} = \Phi_{w_1 h} \circ \Phi_{w_0 h} \circ \Phi_{w_1 h}$$
+
+$$w_1 = \frac{1}{2-2^{1/3}} \approx 1.3512, \quad w_0 = 1 - 2w_1 \approx -1.7024$$
+
+### Forest-Ruth 4th-Order (KDKDKDK pattern)
+$$\theta = \frac{1}{2-2^{1/3}}$$
+$$c = [\theta/2,\; (1-\theta)/2,\; (1-\theta)/2,\; \theta/2] \quad\text{(kick coeffs)}$$
+$$d = [\theta,\; 1-2\theta,\; \theta] \quad\text{(drift coeffs)}$$
+
+---
+
+## 7. Backward Error Analysis (Hairer–Lubich–Wanner)
+
+### Modified Hamiltonian Expansion
+$$\tilde{H}(q,p) = H(q,p) + h^2 H_2(q,p) + h^4 H_4(q,p) + \cdots$$
+
+### First Correction Term
+$$\tilde{H} = H + \frac{h^2}{12}\{V,\{T,V\}\} + O(h^4)$$
+
+### Nested Commutator Form (BCH)
+$$H_2 = -\tfrac{1}{12}\{V,\{T,V\}\}, \quad H_4 = \tfrac{1}{720}\{V,\{V,\{V,\{T,V\}\}\}\} - \tfrac{1}{240}\{T,\{T,\{T,\{V,T\}\}\}\}$$
+
+### Key Consequence
+$\tilde{H}$ is **exactly** conserved by the discrete map → $H$ oscillates within $O(h^2)$ but **never secularly drifts**.
+
+---
+
+## 8. Neural Network Architecture Math
+
+### Standard Neural ODE
+$$\dot{x} = f_\theta(x,t) \quad\text{(no physics structure)}$$
+
+### Hamiltonian Neural Network (HNN, Greydanus 2019)
+$$H_\theta: \mathbb{R}^{2n} \to \mathbb{R}$$
+$$\dot{q} = \frac{\partial H_\theta}{\partial p}, \quad \dot{p} = -\frac{\partial H_\theta}{\partial q}$$
+
+### Residual Symplectic NN (Robotics Variant)
+$$H_\theta(q,p) = H_{\text{analytic}}(q,p) + \Delta H_\theta(q,p)$$
+
+### Lagrangian NN (Cranmer 2020)
+$$L_\theta(q,\dot{q}) = T_\theta(q,\dot{q}) - V_\theta(q)$$
+
+with **PD-by-construction** mass matrix:
+$$M_\theta(q) = L(q)\,L(q)^T, \quad L = \text{tril matrix via Cholesky factorization}$$
+$$\text{Diag constraint: } L_{ii} = \text{softplus}(\cdot) + \epsilon$$
+
+### Port-Hamiltonian NN (with dissipation)
+$$\begin{pmatrix}\dot q \\ \dot p\end{pmatrix} = \bigl(J(q,p) - R(q,p)\bigr)\,\nabla H + G(q)\,u$$
+
+where $R \succeq 0$ (PSD by softplus on diagonal).
+
+---
+
+## 9. Liouville's Theorem / Phase-Space Volume
+
+### Divergence-Free Flow
+$$\nabla \cdot \dot{x} = \nabla \cdot (J\nabla H) = \text{tr}(J\,\nabla^2 H) = 0$$
+
+(since $\text{tr}(J)=0$ and $J$ is constant).
+
+### Jacobian Determinant
+$$\det(D\phi_t) = 1 \quad\forall t$$
+
+→ A blob of initial conditions deforms but **never changes volume**.
+
+---
+
+## 10. Robotics-Specific Hamiltonians
+
+### Standard Manipulator Dynamics
+$$M(q)\ddot{q} + C(q,\dot{q})\dot{q} + g(q) = \tau + J(q)^T F_{\text{ext}}$$
+
+### Hamiltonian Form
+$$p = M(q)\dot{q}$$
+$$H(q,p) = \tfrac{1}{2}\,p^T M(q)^{-1} p + V(q)$$
+
+### Kinetic Energy Decomposition
+$$T = \tfrac{1}{2}\sum_i \frac{p_i^2}{m_i} \quad\text{(separable)}$$
+
+### Hénon-Heiles System
+$$H = \tfrac{1}{2}(p_1^2+p_2^2) + \tfrac{1}{2}(q_1^2+q_2^2) + q_1^2 q_2 - \tfrac{1}{3}q_2^3$$
+
+Chaotic threshold: $E > \tfrac{1}{6}$.
+
+### Three-Body Problem
+$$H = \sum_i \tfrac{1}{2}m_i(\dot{x}_i^2+\dot{y}_i^2) - \sum_{i<j}\frac{Gm_im_j}{\sqrt{(x_i-x_j)^2+(y_i-y_j)^2}}$$
+
+---
+
+## 11. Experimental / Statistical Math
+
+### Noise Model
+$$q^{\text{noisy}} = q + \epsilon, \quad \epsilon \sim \mathcal{N}(0, \sigma^2 I)$$
+$$\text{SNR} = 20\log_{10}\!\left(\frac{\sigma_{\text{signal}}}{\sigma_{\text{noise}}}\right)\ \text{dB}$$
+
+### Loss Functions
+- **Data fit:** $\mathcal{L}_{\text{data}} = \tfrac{1}{N}\sum_i\|x_i^{\text{pred}} - x_i^{\text{true}}\|^2$
+- **PINN physics penalty:** $\mathcal{L}_{\text{phys}} = \tfrac{1}{N}\sum_i\bigl(\nabla H \cdot f_\theta(x_i)\bigr)^2$
+- **Total:** $\mathcal{L} = \mathcal{L}_{\text{data}} + \lambda\,\mathcal{L}_{\text{phys}}$
+
+### Symplecticity Violation Metric
+$$\|D\Phi_h^T J\,D\Phi_h - J\|_F$$
+
+### Statistical Tests
+- Cohen's $d = \frac{\mu_1-\mu_2}{s_{\text{pooled}}}$
+- Bootstrap CI for transition SNR
+- Paired tests across seeds (same data, different methods)
+
+---
+
+## 12. iLQR / MPC Formulation
+
+### Optimal Control Problem
+$$\min_{u_{0:H-1}} \sum_{t=0}^{H-1} \ell(x_t,u_t) + \ell_H(x_H)$$
+
+subject to $x_{t+1} = \Phi_h(x_t, u_t)$ where $\Phi_h$ is the symplectic rollout.
+
+### Linearized Dynamics (iLQR Core)
+$$\delta x_{t+1} = A_t\,\delta x_t + B_t\,\delta u_t$$
+$$A_t = \frac{\partial \Phi_h}{\partial x}\bigg|_{x_t,u_t}, \quad B_t = \frac{\partial \Phi_h}{\partial u}\bigg|_{x_t,u_t}$$
+
+---
+
+## Summary: Equations by Purpose
+
+| Purpose | Key Equations |
+|---|---|
+| System definition | Lagrangian, Legendre transform, $H(q,p)$ |
+| Continuous dynamics | $\dot{x}=J\nabla H$, Poisson brackets |
+| Geometric invariant | $\omega$, $J^T\!M^T\!JM=J$, Liouville |
+| Discrete dynamics | Leapfrog, Yoshida, Forest-Ruth |
+| Long-term accuracy | Modified Hamiltonian $\tilde{H} = H + O(h^2)$ |
+| Learning | $H_\theta$, residual form, Lagrangian form |
+| Validation | Energy drift, symplecticity violation, rollout MSE |
+
+Want me to render any of these into code, or move on to the `torch.func` rewrite?
+
+>>> explain asd a flow chart how each relates to each other
+Thinking...
+The user wants a flowchart explanation of how all these mathematical pieces relate to each other. This is a great request — let me build a comprehensive 
+visual/textual flowchart showing the dependency and flow between all the math concepts in the project.
+
+Let me think about the structure:
+
+1. Start with physics foundations (Lagrangian, configuration space)
+2. Move to phase space (Hamiltonian via Legendre)
+3. Continuous dynamics (Hamilton's equations, symplectic form)
+4. Geometric properties (Liouville, Poisson brackets, conservation)
+5. Discrete dynamics (Leapfrog, Yoshida, Forest-Ruth from splitting)
+6. Long-term analysis (Backward error analysis / modified Hamiltonian)
+7. Learning layer (HNN, Lagrangian NN, Residual, Port-Hamiltonian)
+8. Validation (energy drift, symplecticity check)
+9. Application (iLQR/MPC for robotics)
+10. Experimental math (noise, losses, statistics)
+
+The key relationships:
+- Lagrangian → Hamiltonian (via Legendre transform)
+- Hamiltonian → Hamilton's equations (take derivatives)
+- Hamilton's equations can be written as $\dot{x} = J\nabla H$ (compact symplectic form)
+- $\dot{x} = J\nabla H$ → symplectic form $\omega = dp \wedge dq$
+- $\omega$ + Cartan's formula → Liouville's theorem (volume preservation)
+- Poisson bracket emerges from $J$ matrix: $\{f,g\} = \nabla f^T J \nabla g$
+- $\{H,H\} = 0$ → energy conservation
+- Hamilton's equations split: $\dot{q} = T'(p)$, $\dot{p} = -V'(q)$ → separable form
+- Each piece is exactly solvable → shears are symplectic
+- Composition of shears → leapfrog (and higher: Yoshida, Forest-Ruth)
+- Symplectic composition → symplecticity preserved → modified Hamiltonian $\tilde{H}$
+- Backward error analysis: $\tilde{H} = H + h^2 H_2 + ...$ (Hairer-Lubich-Wanner)
+- $\tilde{H}$ exactly conserved → $H$ bounded → no secular drift
+- Replace analytic $H$ with $H_\theta$ → HNN
+- Train on data → minimize loss
+- For robotics: $H_\theta = H_{\text{analytic}} + \Delta H_\theta$ (residual form)
+- Validate: energy drift, symplecticity check, rollout error
+- Deploy: iLQR uses symplectic rollout as forward model
+- Experiments: noise injection, SNR sweep, statistical tests
+
+Let me make this as a clear ASCII flowchart with explanations at each node.
+...done thinking.
+
+# The Math Flowchart: How Everything Connects
+
+This is the **complete dependency graph** for the project, top to bottom. Each box is a math concept; arrows show derivation flow.
+
+---
+
+## Layer 0: The Physical World
+
+```
+                    ┌─────────────────────────┐
+                    │  THE REAL ROBOT /       │
+                    │  PHYSICAL SYSTEM        │
+                    │                         │
+                    │  Has: positions,        │
+                    │  velocities, masses,    │
+                    │  forces                 │
+                    └───────────┬─────────────┘
+                                │
+                                │ (we observe / measure)
+                                ▼
+```
+
+We don't start with equations. We start with **stuff that moves**. Everything below is us building increasingly sharp mathematical lenses to describe it.
+
+---
+
+## Layer 1: Configuration Space (the Lagrangian view)
+
+```
+    ┌────────────────────────────────────────────┐
+    │  CONFIGURATION SPACE                       │
+    │                                            │
+    │  Coordinates: q ∈ ℝⁿ                      │
+    │  Time derivatives: q̇                     │
+    │                                            │
+    │  Lagrangian: L(q, q̇, t) = T - V          │
+    │    T = kinetic energy (½mq̇²)             │
+    │    V = potential energy (mgh)              │
+    │                                            │
+    │  Equation of motion:                       │
+    │    d/dt(∂L/∂q̇) - ∂L/∂q = 0                │
+    │    (Euler-Lagrange, 2nd order)             │
+    └────────────────────┬───────────────────────┘
+                         │
+                         │ ⚠️ Problem: velocities are not
+                         │    independent variables
+                         │
+                         ▼
+```
+
+The Lagrangian picture works but has structural flaws for our purposes. We promote velocities to **independent variables** — this is the pivotal move.
+
+---
+
+## Layer 2: Phase Space (the Hamiltonian view) — THE TURN
+
+```
+    ┌────────────────────────────────────────────┐
+    │  LEGENDRE TRANSFORM                        │
+    │                                            │
+    │  Define canonical momentum:                │
+    │    pᵢ ≡ ∂L/∂q̇ᵢ                           │
+    │                                            │
+    │  Define Hamiltonian:                       │
+    │    H(q, p, t) ≡ p·q̇ - L                  │
+    │                                            │
+    │  Recode: (q, q̇) → (q, p)                  │
+    │  New variable p is INDEPENDENT             │
+    └────────────────────┬───────────────────────┘
+                         │
+                         │ (differentiate H)
+                         ▼
+    ┌────────────────────────────────────────────┐
+    │  HAMILTON'S CANONICAL EQUATIONS            │
+    │                                            │
+    │    q̇ᵢ = +∂H/∂pᵢ                           │
+    │    ṗᵢ = -∂H/∂qᵢ                           │
+    │                                            │
+    │  FIRST ORDER in 2n variables (q, p)        │
+    │  ANTISYMMETRIC structure (this is key)     │
+    └────────────────────┬───────────────────────┘
+                         │
+                         │ (compact form)
+                         ▼
+```
+
+This is the **moment everything becomes useful**. The antisymmetry is the fingerprint of symplectic geometry.
+
+---
+
+## Layer 3: Symplectic Structure — THE GEOMETRY
+
+```
+    ┌────────────────────────────────────────────┐
+    │  COMPACT SYMPLECTIC FORM                   │
+    │                                            │
+    │    ẋ = J ∇H(x)                             │
+    │                                            │
+    │  where:                                    │
+    │    x = (q; p)       (column, 2n-dim)       │
+    │    J = [ 0  I; -I  0 ]   (skew-symmetric) │
+    │                                            │
+    │  Properties of J:                          │
+    │    Jᵀ = -J       (skew)                    │
+    │    J² = -I       (involution)              │
+    │    J⁻¹ = -J                              │
+    │    tr(J) = 0      (→ divergence-free)      │
+    └────────────────────┬───────────────────────┘
+                         │
+                         │ (raise to geometric form)
+                         ▼
+    ┌────────────────────────────────────────────┐
+    │  SYMPLECTIC 2-FORM                         │
+    │                                            │
+    │    ω = Σ dpᵢ ∧ dqᵢ                        │
+    │                                            │
+    │  Algebraically: ω(v, w) = vᵀ J w          │
+    │                                            │
+    │  Required: closed (dω=0), non-degenerate  │
+    └────────────────────┬───────────────────────┘
+                         │
+            ┌────────────┼────────────┐
+            │            │            │
+            ▼            ▼            ▼
+```
+
+From this one structure, **three independent mathematical theories branch** — each one is a separate lens on the same physics:
+
+---
+
+### Branch A: Liouville's Theorem
+
+```
+    ┌────────────────────────────────────────────┐
+    │  LIOUVILLE'S THEOREM                       │
+    │                                            │
+    │  The flow φₜ preserves ω:                  │
+    │    φₜ*ω = ω                               │
+    │                                            │
+    │  Proof via Cartan's magic formula:         │
+    │    d/dt(φₜ*ω) = φₜ*(ℒ_X_H ω)              │
+    │                  = φₜ*(d ι_{X_H}ω         │
+    │                       + ι_{X_H} dω)       │
+    │                  = φₜ*(d·dH)              │
+    │                  = 0                       │
+    │  (since dω=0 and d²=0)                     │
+    └────────────────────┬───────────────────────┘
+                         │
+                         ▼
+    ┌────────────────────────────────────────────┐
+    │  CONSEQUENCES                              │
+    │                                            │
+    │  • det(Dφₜ) = 1   (volume preserved)       │
+    │  • ∇·ẋ = 0        (incompressible flow)   │
+    │  • Phase-space blobs deform but don't      │
+    │    compress / expand                       │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+### Branch B: Poisson Brackets
+
+```
+    ┌────────────────────────────────────────────┐
+    │  POISSON BRACKET                           │
+    │                                            │
+    │    {f, g} = (∇f)ᵀ J (∇g)                  │
+    │           = Σ (∂f/∂qᵢ · ∂g/∂pᵢ           │
+    │              - ∂f/∂pᵢ · ∂g/∂qᵢ)          │
+    │                                            │
+    │  Skew-symmetric: {f,g} = -{g,f}           │
+    │  Jacobi identity: {{f,g},h} + cyc = 0     │
+    │                                            │
+    │  Hamilton's eqs in this language:          │
+    │    df/dt = {f, H}    for any f             │
+    │                                            │
+    │  In particular:                            │
+    │    dqᵢ/dt = {qᵢ, H} = +∂H/∂pᵢ            │
+    │    dpᵢ/dt = {pᵢ, H} = -∂H/∂qᵢ            │
+    └────────────────────┬───────────────────────┘
+                         │
+                         ▼
+    ┌────────────────────────────────────────────┐
+    │  CONSERVATION THEOREMS                     │
+    │                                            │
+    │  If F is any function:                     │
+    │    dF/dt = {F, H}                          │
+    │                                            │
+    │  F conserved ⟺ {F, H} = 0                 │
+    │                                            │
+    │  SPECIAL CASE:                             │
+    │    {H, H} = 0  (trivially, since skew)     │
+    │    ⟹ dH/dt = 0                            │
+    │    ⟹ ENERGY IS CONSERVED                   │
+    │                                            │
+    │  (This is a THEOREM, not an assumption.)   │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+### Branch C: Symplecticity Condition
+
+```
+    ┌────────────────────────────────────────────┐
+    │  SYMPLECTICITY (Jacobian form)             │
+    │                                            │
+    │  A map Φ is symplectic ⟺:                 │
+    │    (DΦ)ᵀ J (DΦ) = J                       │
+    │                                            │
+    │  Where DΦ = Jacobian matrix of the map     │
+    │                                            │
+    │  Composition:                              │
+    │    If Φ₁ and Φ₂ are symplectic,            │
+    │    then Φ₁ ∘ Φ₂ is symplectic.             │
+    │  (THE KEY PROPERTY)                        │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+## Layer 4: Splitting the Hamiltonian — THE DISCRETIZATION TRICK
+
+```
+    ┌────────────────────────────────────────────┐
+    │  STRUCTURAL ASSUMPTION                     │
+    │                                            │
+    │  For most physical systems:                │
+    │    H(q, p) = T(p) + V(q)                  │
+    │       (separable: kinetic + potential)      │
+    │                                            │
+    │  Hamilton's equations SPLIT:               │
+    │    Part T:  q̇ = T'(p),    ṗ = 0          │
+    │    Part V:  q̇ = 0,        ṗ = -V'(q)     │
+    │                                            │
+    │  Each part is SOLVABLE EXACTLY:            │
+    │    φₕᵀ: (q, p) → (q + h·T'(p), p)        │
+    │          [drift / shear in q]               │
+    │    φₕⱽ: (q, p) → (q, p - h·V'(q))        │
+    │          [kick / shear in p]                │
+    └────────────────────┬───────────────────────┘
+                         │
+                         │ (key insight)
+                         ▼
+    ┌────────────────────────────────────────────┐
+    │  WHY SHEARS ARE SYMPLECTIC                │
+    │                                            │
+    │  Each shear has Jacobian of the form:      │
+    │    M = [  I   A  ]     (triangular)        │
+    │        [  0   I  ]                         │
+    │                                            │
+    │  Verify: Mᵀ J M = J                       │
+    │    (because triangular w/ 1s on diagonal   │
+    │     preserves the symplectic form)         │
+    │                                            │
+    │  So: φₕᵀ is symplectic                     │
+    │      φₕⱽ is symplectic                     │
+    │      φₕᵀ ∘ φₕⱽ is symplectic               │
+    │      (any composition is symplectic)        │
+    └────────────────────┬───────────────────────┘
+                         │
+            ┌────────────┴────────────┐
+            │                         │
+            ▼                         ▼
+```
+
+Now we have two routes — composition order:
+
+---
+
+### Route 1: Leapfrog (2nd order)
+
+```
+    ┌────────────────────────────────────────────┐
+    │  STORMER-VERLET / LEAPFROG                 │
+    │                                            │
+    │    Φₕ = φₕ/₂ⱽ ∘ φₕᵀ ∘ φₕ/₂ⱽ              │
+    │    (kick-drift-kick)                       │
+    │                                            │
+    │  In coordinates:                           │
+    │    p_{n+½} = p_n - (h/2) ∂H/∂q             │
+    │    q_{n+1}  = q_n + h · ∂H/∂p             │
+    │    p_{n+1}  = p_{n+½} - (h/2) ∂H/∂q       │
+    │                                            │
+    │  Order: 2 (global error O(h²))             │
+    │  Symplectic: YES (by composition)          │
+    │  Reversible: YES (time-symmetric)          │
+    │                                            │
+    │  Cost: 2 gradient evaluations per step     │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+### Route 2: Higher-Order (4th)
+
+```
+    ┌────────────────────────────────────────────┐
+    │  YOSHIDA COMPOSITION (4th order)           │
+    │                                            │
+    │    Φₕ⁽⁴⁾ = Φ_{w₁h} ∘ Φ_{w₀h} ∘ Φ_{w₁h}   │
+    │                                            │
+    │  where:                                    │
+    │    w₁ = 1/(2 - 2^(1/3)) ≈ 1.3512           │
+    │    w₀ = 1 - 2w₁ ≈ -1.7024                 │
+    │                                            │
+    │  Each Φ_{wh} is itself a leapfrog step     │
+    │  with step wh.                              │
+    │  Composition of symplectic = symplectic.   │
+    │                                            │
+    │  Order: 4 (error O(h⁴))                    │
+    │  Cost: 6 gradient evaluations per step     │
+    └────────────────────────────────────────────┘
+                    │
+                    │ (alternative)
+                    ▼
+    ┌────────────────────────────────────────────┐
+    │  FOREST-RUTH (4th order, all positive)     │
+    │                                            │
+    │  KDKDKDK pattern with θ = 1/(2-2^(1/3))    │
+    │  All sub-steps go forward in time.         │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+## Layer 5: Backward Error Analysis — WHY THIS WORKS LONG-TERM
+
+```
+    ┌────────────────────────────────────────────┐
+    │  THE PUZZLE                                │
+    │                                            │
+    │  Leapfrog has error O(h²).                 │
+    │  RK4 has error O(h⁴) — better locally!    │
+    │  So why does leapfrog win long-term?        │
+    └────────────────────┬───────────────────────┘
+                         │
+                         ▼
+    ┌────────────────────────────────────────────┐
+    │  BACKWARD ERROR ANALYSIS                   │
+    │  (Hairer, Lubich, Wanner)                  │
+    │                                            │
+    │  THEOREM: A symplectic integrator of order  │
+    │  p is the EXACT flow of a MODIFIED         │
+    │  Hamiltonian H̃:                           │
+    │                                            │
+    │    H̃ = H + h² H₂ + h⁴ H₄ + ...           │
+    │                                            │
+    │  where the corrections are nested           │
+    │  Poisson brackets (BCH series):            │
+    │                                            │
+    │    H₂ = -1/12 · {V, {T, V}}                │
+    │    H₄ = +1/720 {V,{V,{V,{T,V}}}}           │
+    │         - 1/240 {T,{T,{T,{V,T}}}}           │
+    │                                            │
+    │  And H̃ is EXACTLY CONSERVED               │
+    │  by the discrete map (to machine prec.).   │
+    └────────────────────┬───────────────────────┘
+                         │
+                         ▼
+    ┌────────────────────────────────────────────┐
+    │  THE BIG RESULT                            │
+    │                                            │
+    │  Since H̃ = const along trajectories,      │
+    │  and H = H̃ - O(h²), we get:               │
+    │                                            │
+    │    |H(t) - H(0)| = O(h²)                  │
+    │                  = CONSTANT IN t           │
+    │                                            │
+    │  Energy OSCILLATES within an O(h²) band    │
+    │  but NEVER DRIFTS.                         │
+    │                                            │
+    │  Compare RK4:                             │
+    │    |H(t) - H(0)| = O(h⁴ t)                │
+    │                  = GROWS LINEARLY          │
+    │    (secular drift, no bound)               │
+    │                                            │
+    │  Trade-off: symplectic swaps global        │
+    │  accuracy for structural fidelity.         │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+## Layer 6: Replace $H$ with $H_\theta$ — THE LEARNING STEP
+
+```
+    ┌────────────────────────────────────────────┐
+    │  THE KEY INSIGHT                           │
+    │                                            │
+    │  All the symplectic machinery above        │
+    │  doesn't care WHERE H comes from.          │
+    │  It could be analytic, hand-coded,         │
+    │  or LEARNED FROM DATA.                     │
+    │                                            │
+    │  Replace H → H_θ (a neural network)        │
+    │  Everything above still works!             │
+    └────────────────────┬───────────────────────┘
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+        ▼                ▼                ▼
+```
+
+Three architectural choices for the neural $H$:
+
+```
+   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+   │  HNN            │  │  LNN            │  │  RESIDUAL       │
+   │  (Greydanus)    │  │  (Cranmer)      │  │  (Robotics)     │
+   │                 │  │                 │  │                 │
+   │  H_θ: (q,p) →ℝ  │  │  L_θ(q,q̇)=T-V  │  │  H = H_analyt   │
+   │  full MLP       │  │  PD M(q) via    │  │    + ΔH_θ(q,p)  │
+   │  output scalar  │  │  Cholesky       │  │  small NN       │
+   │                 │  │                 │  │                 │
+   │  Pure black box │  │  Respects T-V   │  │  Anchored to    │
+   │                 │  │  structure      │  │  known physics  │
+   │  Needs: lots    │  │                 │  │                 │
+   │  of data        │  │  Needs: lots    │  │  Needs: ~30min  │
+   │                 │  │  of data        │  │  of data         │
+   └────────┬────────┘  └────────┬────────┘  └────────┬────────┘
+            │                    │                    │
+            └────────────────────┼────────────────────┘
+                                 │
+                                 │ (gradient descent on data loss)
+                                 ▼
+```
+
+---
+
+## Layer 7: Training — All Three Pieces Come Together
+
+```
+    ┌────────────────────────────────────────────┐
+    │  TRAINING LOOP                             │
+    │                                            │
+    │  For each batch of trajectory data:        │
+    │                                            │
+    │    1. Take (q_n, p_n) from data           │
+    │    2. Predict (q_{n+1}, p_{n+1}) via:     │
+    │         (q_{n+½}, p_{n+½}) via ∂H_θ/∂q    │
+    │         q_{n+1}           via ∂H_θ/∂p     │
+    │         p_{n+1}           via ∂H_θ/∂q     │
+    │       (this IS the leapfrog step)          │
+    │    3. Compute loss:                        │
+    │         L_data = ||pred - true||²         │
+    │       (+ optional λ·L_phys for PINN)      │
+    │    4. Backprop through the leapfrog        │
+    │       (uses torch.func for efficiency)     │
+    │    5. Update θ                             │
+    │                                            │
+    │  Crucial: ẋ = J∇H_θ means AUTOGRAD        │
+    │  computes the dynamics for free.           │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+## Layer 8: Validation — How Do We Know It Worked?
+
+```
+    ┌────────────────────────────────────────────┐
+    │  VALIDATION METRICS                        │
+    │                                            │
+    │  A. Energy drift test:                     │
+    │     Roll out 10,000 steps with leapfrog.   │
+    │     Plot H(q(t),p(t)) vs t.               │
+    │     Expected: bounded oscillation, no      │
+    │     secular trend.                         │
+    │     (Direct consequence of backward error) │
+    │                                            │
+    │  B. Symplecticity check:                   │
+    │     Compute DΦ_h numerically.             │
+    │     Check ||DΦ_hᵀ J DΦ_h - J||_F         │
+    │     Should be ≈ 0 (up to machine ε).      │
+    │                                            │
+    │  C. Rollout error:                         │
+    │     Compare long-term prediction to        │
+    │     held-out ground truth.                 │
+    │                                            │
+    │  D. Phase-space portrait:                  │
+    │     Plot (q,p) over time.                  │
+    │     Symplectic: clean closed orbits.      │
+    │     Non-symplectic: spirals.               │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+## Layer 9: The Research Question
+
+```
+    ┌────────────────────────────────────────────┐
+    │  EXPERIMENTAL COMPARISON                   │
+    │                                            │
+    │  Three models, same data:                  │
+    │                                            │
+    │  (1) Vanilla NN: ẋ = f_θ(x)              │
+    │      No physics. RK4 integration.          │
+    │                                            │
+    │  (2) PINN: ẋ = f_θ(x) + λ·||∇H·f_θ||²   │
+    │      Soft constraint. RK4.                 │
+    │                                            │
+    │  (3) Symplectic NN: H_θ(q,p), leapfrog    │
+    │      Hard constraint. NO λ to tune.        │
+    │                                            │
+    │  Sweep noise (SNR 40→0 dB), 5-30 seeds,   │
+    │  measure rollout error vs noise level.     │
+    │                                            │
+    │  Question: Where do they cross?            │
+    │           (Phase transition?)              │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+## Layer 10: Robotics Application
+
+```
+    ┌────────────────────────────────────────────┐
+    │  DEPLOYMENT: iLQR / MPC                    │
+    │                                            │
+    │  At each control cycle (100 Hz):           │
+    │                                            │
+    │    1. Read sensors → (q_meas, p_meas)      │
+    │    2. For each candidate torque sequence:  │
+    │         Roll out via symplectic NN:        │
+    │           x_{t+1} = Φₕ(x_t, τ_t)          │
+    │       Score against cost (goal, energy,    │
+    │       collision avoidance).                │
+    │    3. Send first τ to motors.              │
+    │    4. Repeat.                              │
+    │                                            │
+    │  The symplectic rollout is FORCED to       │
+    │  conserve energy → trajectories stay       │
+    │  realistic over the full horizon.         │
+    │  iLQR linearizes around the rollout:      │
+    │    δx_{t+1} = A_t δx_t + B_t δu_t         │
+    └────────────────────────────────────────────┘
+```
+
+---
+
+## The Complete Picture (One Page)
+
+```
+PHYSICAL WORLD (Layer 0)
+    │
+    ▼
+CONFIGURATION SPACE (q, q̇)
+    │
+    ▼
+LEGENDRE TRANSFORM
+    │
+    ▼
+PHASE SPACE (q, p) + HAMILTONIAN
+    │
+    ▼
+HAMILTON'S EQUATIONS: ẋ = J∇H
+    │
+    ├──→ SYMPLECTIC 2-FORM ω
+    │       │
+    │       ├──→ LIOUVILLE: det(Dφ)=1
+    │       ├──→ POISSON BRACKETS {f,g}
+    │       │       │
+    │       │       └──→ CONSERVATION: dF/dt = {F,H}
+    │       │              {H,H}=0 ⟹ dH/dt=0
+    │       │
+    │       └──→ SYMPLECTICITY: DΦᵀJDΦ = J
+    │              │
+    │              └──→ COMPOSITION PRESERVES IT
+    │
+    ▼
+SPLIT H = T(p) + V(q)
+    │
+    ▼
+SHEAR MAPS (each is symplectic)
+    │
+    ├──→ LEAPFROG (order 2)
+    │       │
+    │       └──→ 3 LEAPFROGS
+    │              │
+    │              └──→ YOSHIDA 4 / FOREST-RUTH 4
+    │
+    ▼
+BACKWARD ERROR ANALYSIS
+    │
+    ▼
+MODIFIED HAMILTONIAN H̃ = H + h²H₂ + ...
+    │
+    ▼
+ENERGY OSCILLATES WITHIN O(h²), NEVER DRIFTS
+    │
+    ▼
+REPLACE H → H_θ (LEARNED)
+    │
+    ▼
+HAMILTONIAN / LAGRANGIAN / RESIDUAL / PORT-H NN
+    │
+    ▼
+TRAIN: AUTOGRAD GIVES DYNAMICS, LEAPFROG GIVES ROLLOUT
+    │
+    ▼
+VALIDATE: ENERGY DRIFT, SYMPLECTICITY, ROLLOUT ERROR
+    │
+    ▼
+DEPLOY: iLQR / MPC WITH SYMPLECTIC FORWARD MODEL
+    │
+    ▼
+RESEARCH: WHERE DOES HARD CONSTRAINT BEAT SOFT PENALTY?
+```
+
+---
+
+## The Three "Why" Chains (Compressed)
+
+**Why does leapfrog conserve energy?**
+→ Because it's a composition of symplectic maps, and symplectic composition is closed.
+
+**Why is symplectic composition closed?**
+→ Because each shear has triangular Jacobian $M$ with $M^T J M = J$, and this identity composes.
+
+**Why does that matter for ML?**
+→ Because we can replace the analytic $H$ in the symplectic machinery with a learned $H_\theta$ and inherit all the structural guarantees.
+
+**Why does RK4 fail long-term?**
+→ Because it has no symplectic structure, so its discrete flow does NOT preserve any modified $H$, so energy drifts secularly as $O(h^4 t)$.
+
+**Why does this matter for robotics?**
+→ Because MPC rolls out hundreds of steps per control decision; even 0.1% energy drift compounds to nonsense within seconds.
+
+---
+
+
 
