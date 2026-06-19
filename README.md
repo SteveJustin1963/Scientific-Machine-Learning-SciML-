@@ -649,7 +649,7 @@ $$\dot{x} = J^{-1} \nabla H = -J \nabla H \quad \text{(since } J^2 = -I\text{)}$
 
 This gives Hamilton's equations: $\dot{q} = \partial H/\partial p$, $\dot{p} = -\partial H/\partial q$. ✓
 
-The flow $\phi_t$ of $X_H$ preserves $\omega$ by Liouville's theorem (which we can verify directly): $\frac{d}{dt}\phi_t^*\omega = \phi_t^*(\mathcal{L}_{X_H}\omega) = \phi_t^*(d\iota_{X_H}\omega + \iota_{X_H}d\omega) = \phi_t^*(d\, dH) = 0$ using Cartan's magic formula and $d\omega = 0$. This is the clean proof that Hamiltonian flows are symplectomorphisms.
+The flow $\phi_t$ of $X_H$ preserves $\omega$ by Liouville's theorem (which we can verify directly): $$\frac{d}{dt}\phi_t^*\omega = \phi_t^*(\mathcal{L}_{X_H}\omega) = \phi_t^*(d\iota_{X_H}\omega + \iota_{X_H}d\omega) = \phi_t^*(d\, dH) = 0$$ using Cartan's magic formula and $d\omega = 0$. This is the clean proof that Hamiltonian flows are symplectomorphisms.
 
 ---
 
