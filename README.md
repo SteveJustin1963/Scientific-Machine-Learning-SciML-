@@ -3480,4 +3480,603 @@ RESEARCH: WHERE DOES HARD CONSTRAINT BEAT SOFT PENALTY?
 ---
 
 
+# Where Each Method Installs Into Robot Code
+
+I'll trace the **exact insertion points** in your robot stack, from data collection through MPC deployment. Each method has a precise, minimal-touch 
+installation location.
+
+---
+
+## The Robot Code Stack (where things plug in)
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  ROS / ORBIT / ISAAC LAYER   (hardware / simulator I/O)        │
+├────────────────────────────────────────────────────────────────┤
+│  STATE ESTIMATION             (q, q̇ from encoders + filters)  │
+├────────────────────────────────────────────────────────────────┤
+│  DYNAMICS MODEL               ← ┌──────────────────────────┐   │
+│  ┌──────────────────┐         │ │  YOUR TARGET LAYER       │   │
+│  │ M(q)q̈ + C + g   │         │ │  Methods install HERE    │   │
+│  │ = τ + J^T F_ext  │         │ │                          │   │
+│  └──────────────────┘         │ │  • Analytic baseline     │   │
+│           │                   │ │  • Symplectic integrator │   │
+│           │                   │ │  • H_θ (learned NN)      │   │
+│           ▼                   │ │  • Lagrangian NN         │   │
+│  ┌──────────────────┐         │ │  • Port-Hamiltonian NN   │   │
+│  │   INTEGRATOR     │◄────────┤ │  • Residual symplectic   │   │
+│  │  (rollout core)  │         │ │  • Backward error corr.  │   │
+│  └──────────────────┘         │ │                          │   │
+│           │                   │ └──────────────────────────┘   │
+│           ▼                   │                                │
+│  ┌──────────────────┐         │                                │
+│  │  TRAJECTORY      │         │                                │
+│  │  PREDICTION      │         │                                │
+│  └──────────────────┘         │                                │
+├────────────────────────────────┤                                │
+│  iLQR / MPC CONTROLLER        │                                │
+│  (uses trajectory predictions)│                                │
+└────────────────────────────────┘
+```
+
+**Single most important point:** every method we discussed installs in the **DYNAMICS MODEL + INTEGRATOR** layer. Everything above (state estimation) and 
+below (controller) stays the same.
+
+---
+
+## Method 1: Analytic Hamiltonian + Leapfrog
+
+### What you replace
+Your current Newton-Euler forward dynamics + RK4 (or Euler) integrator.
+
+### Where it goes
+
+```python
+# FILE: robot_controller/dynamics/symplectic_integrator.py
+# (NEW FILE - the only new thing)
+
+import torch
+
+class SymplecticRobotIntegrator:
+    """
+    Install: replace your existing forward_dynamics_step() function.
+    Drop-in replacement for any RK4/Euler integrator.
+    """
+    
+    def __init__(self, mass_matrix_fn, gravity_fn, coriolis_fn):
+        # Wire up your existing analytic functions
+        self.M = mass_matrix_fn       # M(q) → (n, n)
+        self.g = gravity_fn           # g(q) → (n,)
+        self.C = coriolis_fn          # C(q, q̇)q̇ → (n,)
+    
+    def H(self, q, p):
+        """Hamiltonian from your existing physics. PURE FUNCTION."""
+        M_inv_p = torch.linalg.solve(self.M(q), p.unsqueeze(-1)).squeeze(-1)
+        T = 0.5 * (p * M_inv_p).sum(dim=-1)        # kinetic
+        V = self.g(q)                                # potential (your gravity term)
+        return T + V
+    
+    def step(self, q, p, tau, h):
+        """ONE leapfrog step with torque. Drop-in for any stepper."""
+        # Half-kick with control
+        dHdq = self._grad_H_wrt_q(q, p)
+        p_half = p - (h/2) * dHdq + (h/2) * tau
+        
+        # Full drift using analytic M(q) inverse
+        q_new = q + h * torch.linalg.solve(self.M(q), p_half.unsqueeze(-1)).squeeze(-1)
+        
+        # Half-kick at new position
+        dHdq_new = self._grad_H_wrt_q(q_new, p_half)
+        p_new = p_half - (h/2) * dHdq_new + (h/2) * tau
+        
+        return q_new, p_new
+    
+    def _grad_H_wrt_q(self, q, p):
+        q = q.detach().requires_grad_(True)
+        return torch.autograd.grad(self.H(q, p).sum(), q)[0].detach()
+```
+
+### Installation points (file-by-file)
+
+| File | What changes | Lines touched |
+|---|---|---|
+| `dynamics/__init__.py` | Import new integrator | +1 line |
+| `dynamics/symplectic_integrator.py` | New file (above) | +50 lines |
+| `controller/mpc_engine.py` | Replace `forward_dynamics(...)` call with `integrator.step(...)` | -3 / +3 lines |
+| `controller/rollout.py` | Replace loop body with `step()` | -10 / +10 lines |
+
+**That's it.** The state estimator, sensor I/O, and iLQR cost function don't change.
+
+---
+
+## Method 2: Residual Symplectic NN (Recommended for Robotics)
+
+### What you replace
+Same integrator as Method 1, but `H` becomes `H_analytic + ΔH_θ`.
+
+### Where it goes
+
+```python
+# FILE: robot_controller/dynamics/residual_hamiltonian_nn.py
+# (NEW FILE)
+
+import torch
+import torch.nn as nn
+
+class ResidualHamiltonianNN(nn.Module):
+    """
+    Install: same place as the analytic integrator.
+    The frozen analytical baseline goes in __init__.
+    The NN learns the residual.
+    """
+    
+    def __init__(self, n_dof, mass_matrix_fn, gravity_fn, coriolis_fn, hidden=128):
+        super().__init__()
+        
+        # FROZEN: your existing analytic functions (don't touch them)
+        self.M = mass_matrix_fn
+        self.g = gravity_fn
+        self.C = coriolis_fn
+        self.n_dof = n_dof
+        
+        # LEARNED: the residual (small NN, easy to train)
+        self.correction_net = nn.Sequential(
+            nn.Linear(2 * n_dof, hidden),
+            nn.Tanh(),
+            nn.Linear(hidden, hidden),
+            nn.Tanh(),
+            nn.Linear(hidden, 1)
+        )
+    
+    def H_analytic(self, q, p):
+        """The exact physics you already had."""
+        M_inv_p = torch.linalg.solve(self.M(q), p.unsqueeze(-1)).squeeze(-1)
+        T = 0.5 * (p * M_inv_p).sum(dim=-1)
+        V = self.g(q)
+        return T + V
+    
+    def H_total(self, q, p):
+        """Total: analytic + learned residual."""
+        H_phys = self.H_analytic(q, p)
+        x = torch.cat([q, p], dim=-1)
+        delta_H = self.correction_net(x).squeeze(-1) * 0.1  # small scale
+        return H_phys + delta_H
+    
+    def forward(self, q, p):
+        return self.H_total(q, p)
+```
+
+### The integrator (drop-in, shared with Method 1)
+
+```python
+# FILE: robot_controller/dynamics/symplectic_integrator.py
+# (UPDATED - same file, now accepts any H function)
+
+class SymplecticIntegrator:
+    def __init__(self, H_fn, M_fn=None):
+        self.H = H_fn          # analytic, residual NN, or pure NN
+        self.M_fn = M_fn        # optional, for forced version
+    
+    def step(self, q, p, tau, h, model):
+        dHdq = self._grad_wrt_q(model, q, p)
+        p_half = p - (h/2) * dHdq + (h/2) * tau
+        
+        # If M is known, use it for the drift (fast)
+        if self.M_fn is not None:
+            q_new = q + h * torch.linalg.solve(self.M_fn(q), p_half.unsqueeze(-1)).squeeze(-1)
+        else:
+            # Else use generic drift via H gradient
+            q_new = q + h * self._grad_wrt_p(model, q, p_half)
+        
+        dHdq_new = self._grad_wrt_q(model, q_new, p_half)
+        p_new = p_half - (h/2) * dHdq_new + (h/2) * tau
+        return q_new, p_new
+    
+    def _grad_wrt_q(self, model, q, p):
+        q = q.detach().requires_grad_(True)
+        return torch.autograd.grad(model.H_total(q, p).sum(), q)[0].detach()
+    
+    def _grad_wrt_p(self, model, q, p):
+        p = p.detach().requires_grad_(True)
+        return torch.autograd.grad(model.H_total(q, p).sum(), p)[0].detach()
+```
+
+### Installation points
+
+| File | What changes | Touched |
+|---|---|---|
+| `dynamics/residual_hamiltonian_nn.py` | New file | +60 lines |
+| `dynamics/symplectic_integrator.py` | Updated to accept any `H_fn` | +30 lines |
+| `training/train_residual_nn.py` | New file (offline, runs once) | +100 lines |
+| `controller/mpc_engine.py` | Switch integrator to `SymplecticIntegrator(H_fn=model)` | -2 / +2 lines |
+| `config/robot.yaml` | Add `model_checkpoint: "models/residual_nn.pt"` | +1 line |
+
+**Controller code itself** (iLQR cost, optimization loop, sensor reading) **doesn't change at all**.
+
+---
+
+## Method 3: Lagrangian NN (when you have no analytic baseline)
+
+### What you replace
+The entire dynamics model — including the mass matrix.
+
+### Where it goes
+
+```python
+# FILE: robot_controller/dynamics/lagrangian_nn.py
+# (NEW FILE - replaces analytic model entirely)
+
+import torch
+import torch.nn as nn
+
+class LagrangianNN(nn.Module):
+    """
+    Install: when you DON'T have a good analytic model.
+    Learns M(q), V(q) from data with PD-by-construction.
+    """
+    
+    def __init__(self, n_dof, hidden=128):
+        super().__init__()
+        self.n_dof = n_dof
+        n_tril = n_dof * (n_dof + 1) // 2  # number of lower-tri entries
+        
+        self.M_net = nn.Sequential(
+            nn.Linear(n_dof, hidden), nn.Tanh(),
+            nn.Linear(hidden, hidden), nn.Tanh(),
+            nn.Linear(hidden, n_tril)
+        )
+        self.V_net = nn.Sequential(
+            nn.Linear(n_dof, hidden), nn.Tanh(),
+            nn.Linear(hidden, hidden), nn.Tanh(),
+            nn.Linear(hidden, 1)
+        )
+    
+    def mass_matrix(self, q):
+        L_params = self.M_net(q)
+        L = torch.zeros(*q.shape[:-1], self.n_dof, self.n_dof,
+                       device=q.device, dtype=q.dtype)
+        tril = torch.tril_indices(self.n_dof, self.n_dof)
+        L[..., tril[0], tril[1]] = L_params
+        # PD-by-construction: softplus on diagonal
+        diag = torch.arange(self.n_dof, device=q.device)
+        L[..., diag, diag] = torch.nn.functional.softplus(
+            L[..., diag, diag]) + 1e-4
+        return L @ L.transpose(-1, -2)
+    
+    def kinetic(self, q, qdot):
+        M = self.mass_matrix(q)
+        return 0.5 * torch.einsum('...ij,...i,...j->...', M, qdot, qdot)
+    
+    def potential(self, q):
+        return self.V_net(q).squeeze(-1)
+    
+    def lagrangian(self, q, qdot):
+        return self.kinetic(q, qdot) - self.potential(q)
+```
+
+**Note:** Lagrangian NNs need a different integrator (uses Euler-Lagrange equations, not Hamilton's directly). You'll integrate by auto-differentiating 
+$L$.
+
+### Installation points
+
+| File | What changes | Touched |
+|---|---|---|
+| `dynamics/lagrangian_nn.py` | New file (replaces analytic) | +80 lines |
+| `dynamics/symplectic_integrator.py` | Add `lagrangian_leapfrog_step()` variant | +40 lines |
+| `training/train_lnn.py` | New file | +120 lines |
+| `controller/mpc_engine.py` | Swap integrator to Lagrangian variant | -5 / +5 lines |
+
+---
+
+## Method 4: Port-Hamiltonian NN (with friction/dissipation)
+
+### What you replace
+The integrator — adds a friction term to the dynamics.
+
+### Where it goes
+
+```python
+# FILE: robot_controller/dynamics/port_hamiltonian_nn.py
+# (NEW FILE or appended to residual_hamiltonian_nn.py)
+
+class PortHamiltonianNN(nn.Module):
+    """
+    Install: same place as residual NN, plus friction.
+    Use when robot has heavy damping (hydraulics, gear friction, etc.)
+    """
+    
+    def __init__(self, n_dof, mass_matrix_fn, gravity_fn, hidden=64):
+        super().__init__()
+        self.M = mass_matrix_fn
+        self.g = gravity_fn
+        self.n_dof = n_dof
+        
+        # LEARNED dissipation (PSD by softplus)
+        self.R_net = nn.Sequential(
+            nn.Linear(2 * n_dof, hidden), nn.Tanh(),
+            nn.Linear(hidden, n_dof)
+        )
+        
+        # LEARNED residual energy (small)
+        self.H_correction = nn.Sequential(
+            nn.Linear(2 * n_dof, hidden), nn.Tanh(),
+            nn.Linear(hidden, 1)
+        )
+    
+    def H_total(self, q, p):
+        M_inv_p = torch.linalg.solve(self.M(q), p.unsqueeze(-1)).squeeze(-1)
+        T = 0.5 * (p * M_inv_p).sum(dim=-1)
+        V = self.g(q)
+        x = torch.cat([q, p], dim=-1)
+        return T + V + 0.1 * self.H_correction(x).squeeze(-1)
+    
+    def R_matrix(self, q, p):
+        """Diagonal positive dissipation."""
+        x = torch.cat([q, p], dim=-1)
+        diag = torch.nn.functional.softplus(self.R_net(x)) + 1e-4
+        return torch.diag_embed(diag)
+    
+    def dynamics(self, q, p, tau):
+        """
+        Port-Hamiltonian: ẋ = (J - R) ∇H + G·u
+        Energy DECREASES due to R (not conserved, but bounded).
+        """
+        x = torch.cat([q, p], dim=-1)
+        x_req = x.detach().requires_grad_(True)
+        q_r, p_r = x_req[..., :self.n_dof], x_req[..., self.n_dof:]
+        H = self.H_total(q_r, p_r).sum()
+        grad_H = torch.autograd.grad(H, x_req)[0]
+        dHdq, dHdp = grad_H[..., :self.n_dof], grad_H[..., self.n_dof:]
+        
+        J = torch.zeros(self.n_dof * 2, self.n_dof * 2, device=q.device)
+        # ... build J ...
+        R = self.R_matrix(q, p)
+        # ... build R ...
+        # Apply: ẋ = (J-R) ∇H + [0; τ]
+        ...
+```
+
+### Installation points
+
+| File | What changes | Touched |
+|---|---|---|
+| `dynamics/port_hamiltonian_nn.py` | New file | +80 lines |
+| `dynamics/symplectic_integrator.py` | Add `port_hamiltonian_step()` | +30 lines |
+| Everything else | Same as Method 2 | — |
+
+---
+
+## Method 5: Backward Error Correction (post-hoc fix)
+
+### What you replace
+Nothing in production. This is an **analysis tool** + optional correction layer.
+
+### Where it goes
+
+```python
+# FILE: robot_controller/analysis/backward_error.py
+# (NEW FILE - offline analysis, runs during validation)
+
+class BackwardErrorAnalyzer:
+    """
+    Install: in your validation/test pipeline only.
+    NOT in the real-time control loop.
+    """
+    
+    def __init__(self, integrator):
+        self.integrator = integrator
+    
+    def measure_modified_hamiltonian(self, q_traj, p_traj, h, n_terms=2):
+        """
+        Given a trajectory, extract the implicit H̃ being conserved.
+        Compares to true H — measures 'how symplectic' the run was.
+        """
+        # H̃ is the constant of motion; H oscillates around it
+        H_values = []
+        for q, p in zip(q_traj, p_traj):
+            H_values.append(self.integrator.H(q, p).item())
+        H_arr = np.array(H_values)
+        
+        # Modified Hamiltonian = mean value (approximate)
+        H_tilde = np.mean(H_arr)
+        # H oscillates within O(h²) around H̃
+        oscillation_amplitude = (np.max(H_arr) - np.min(H_arr)) / 2
+        
+        return {
+            'H_tilde': H_tilde,
+            'H_oscillation_amplitude': oscillation_amplitude,
+            'H_drift_per_step': oscillation_amplitude / h,  # predicted O(h²)
+        }
+    
+    def predict_long_term_error(self, H_tilde_dict, T):
+        """For symplectic: error is bounded. For RK4: error ∝ T."""
+        # If the integrator is symplectic, returns bounded error
+        # If not, returns linear-in-T drift estimate
+        ...
+```
+
+### Installation points
+
+| File | What changes | Touched |
+|---|---|---|
+| `analysis/backward_error.py` | New file | +60 lines |
+| `tests/test_symplecticity.py` | New test file (validates integrator) | +40 lines |
+| `training/post_train_analysis.py` | Hook to analyze checkpoints | +10 lines |
+| **Real-time controller** | **NOT modified** | 0 lines |
+
+This one is purely diagnostic.
+
+---
+
+## Method 6: Higher-Order (Yoshida 4 / Forest-Ruth)
+
+### What you replace
+Just the `step()` function inside the integrator.
+
+### Where it goes
+
+```python
+# FILE: robot_controller/dynamics/higher_order_integrators.py
+# (NEW FILE - additional step functions)
+
+class Yoshida4Integrator(SymplecticIntegrator):
+    """
+    Install: when energy drift in leapfrog is still too high.
+    Drop-in replacement: same .step(q, p, tau, h) interface.
+    """
+    
+    def step(self, q, p, tau, h, model):
+        cbrt2 = 2 ** (1/3)
+        w1 = 1.0 / (2.0 - cbrt2)
+        w0 = 1.0 - 2.0 * w1
+        
+        # Three leapfrog sub-steps with different step sizes
+        q, p = self._substep(q, p, w1 * h, tau, model)
+        q, p = self._substep(q, p, w0 * h, tau, model)  # negative step OK
+        q, p = self._substep(q, p, w1 * h, tau, model)
+        return q, p
+    
+    def _substep(self, q, p, h, tau, model):
+        return super().step(q, p, tau, h, model)
+```
+
+### Installation points
+
+| File | What changes | Touched |
+|---|---|---|
+| `dynamics/higher_order_integrators.py` | New file | +30 lines |
+| `dynamics/symplectic_integrator.py` | Add `Yoshida4Integrator(SymplecticIntegrator)` | +5 lines |
+| `config/robot.yaml` | Change `integrator: leapfrog` → `integrator: yoshida4` | 1 line |
+| **Everything else** | **No changes** | 0 lines |
+
+---
+
+## The Master Installation Map
+
+Here's everything in one view, showing where each method touches your codebase:
+
+```
+robot_controller/
+│
+├── dynamics/
+│   ├── analytic_model.py          ← FROZEN (your existing physics)
+│   ├── symplectic_integrator.py   ← ★ INSTALL METHODS 1, 2, 6 HERE
+│   ├── residual_hamiltonian_nn.py ← ★ METHOD 2
+│   ├── lagrangian_nn.py           ← ★ METHOD 3
+│   ├── port_hamiltonian_nn.py     ← ★ METHOD 4
+│   └── higher_order_integrators.py← ★ METHOD 6
+│
+├── controller/
+│   ├── mpc_engine.py              ← ★ SWAP INTEGRATOR (1 line change)
+│   ├── ilqr.py                    ← UNCHANGED
+│   └── rollout.py                 ← USES INTEGRATOR (3 line change)
+│
+├── training/                       ← ★ METHODS 2,3,4 NEED TRAINING HERE
+│   ├── train_residual_nn.py       ← ★ METHOD 2 (offline, once)
+│   ├── train_lnn.py               ← ★ METHOD 3
+│   └── train_port_h.py            ← ★ METHOD 4
+│
+├── analysis/                       ← ★ METHOD 5 (post-hoc only)
+│   ├── backward_error.py          ← ★ METHOD 5
+│   └── symplecticity_check.py     ← ★ VALIDATION
+│
+├── tests/
+│   └── test_symplecticity.py      ← ★ VERIFY INSTALLATION
+│
+└── config/
+    └── robot.yaml                  ← ★ SELECT METHOD (1 line)
+```
+
+---
+
+## The "Minimum Viable Install" (5 minutes)
+
+If you want to test the core idea on your existing robot with **zero new files**:
+
+```python
+# In your existing rollout.py, replace ONE function:
+
+def rollout_step(q, p, tau, h, model_params):
+    """REPLACE this function with leapfrog. Everything else stays."""
+    
+    # OLD (RK4):
+    # return rk4_step(dynamics_func, q, p, tau, h, model_params)
+    
+    # NEW (leapfrog, 5 lines):
+    M = model_params['mass_matrix'](q)
+    g = model_params['gravity'](q)
+    def H(q, p):
+        M_inv_p = torch.linalg.solve(M, p.unsqueeze(-1)).squeeze(-1)
+        return 0.5 * (p * M_inv_p).sum() + g(q)
+    
+    q_g = q.detach().requires_grad_(True)
+    dHdq = torch.autograd.grad(H(q_g, p).sum(), q_g)[0]
+    p_half = p - (h/2) * dHdq + (h/2) * tau
+    
+    q_new = q + h * torch.linalg.solve(M, p_half.unsqueeze(-1)).squeeze(-1)
+    
+    q_g2 = q_new.detach().requires_grad_(True)
+    dHdq2 = torch.autograd.grad(H(q_g2, p_half).sum(), q_g2)[0]
+    p_new = p_half - (h/2) * dHdq2 + (h/2) * tau
+    
+    return q_new, p_new
+```
+
+That's it. **5 lines inside one existing function.** Everything else in your robot stack continues to work. Run the same MPC, get the same commands, but 
+now energy is bounded forever.
+
+---
+
+## Decision Tree: Which Method Where?
+
+```
+START
+  │
+  ├─ Do you have a good analytic physics model?
+  │   │
+  │   ├─ YES → Do you trust it fully?
+  │   │        │
+  │   │        ├─ YES, trust it → METHOD 1 (leapfrog + analytic H)
+  │   │        │                       Simplest. Use Yoshida4 if needed.
+  │   │        │
+  │   │        └─ MOSTLY → METHOD 2 (Residual NN on top)
+  │   │                    Best for real robots.
+  │   │
+  │   └─ NO → Do you know the kinetic energy is separable?
+  │            │
+  │            ├─ YES → METHOD 3 (Lagrangian NN)
+  │            │
+  │            └─ NO → Consider whether you should be modeling
+  │                     this as Hamiltonian at all.
+  │
+  ├─ Does your robot have significant friction / dissipation?
+  │   │
+  │   ├─ YES → METHOD 4 (Port-Hamiltonian)
+  │   │
+  │   └─ NO → Methods 1, 2, or 3 (Hamiltonian)
+  │
+  └─ Is leapfrog's O(h²) energy oscillation too large?
+      │
+      ├─ YES → METHOD 6 (Yoshida 4th order)
+      │
+      └─ NO → Stay with leapfrog (faster)
+```
+
+---
+
+## The 80/20 Rule for Robot Installation
+
+**80% of the value comes from this:**
+1. Install Method 1 (leapfrog on analytic H) — replaces one integrator function
+2. Validate with Method 5 (backward error analysis) — confirms it works
+3. Later: add Method 2 (residual NN) when you have data — learns the unmodeled 10%
+
+**Skip the rest** until those three are running on your hardware. Yoshida4, Lagrangian NN, and Port-Hamiltonian are for specific pain points you'll 
+discover after the baseline is deployed.
+
+Want me to write the complete drop-in replacement code for one specific method on your target robot (just tell me which: manipulator, quadruped, drone, 
+etc.)?
+
+
+
 
