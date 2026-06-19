@@ -1,6 +1,4 @@
-I apologize for the misunderstanding. You wanted the *entire* comprehensive `README.md` document rewritten from top to bottom, seamlessly integrating all the errata corrections (the `torch.func` rewrite, Backward Error Analysis, PINN terminology, correlated noise, gradient checkpointing, and statistical seed counts) alongside the robotics additions and math inventory.
 
-Here is the complete, corrected, and publication-ready `README.md`:
 
 ```markdown
 # Symplectic Neural ODEs for Noisy Hamiltonian Systems
