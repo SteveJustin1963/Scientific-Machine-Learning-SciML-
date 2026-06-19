@@ -1,6 +1,4 @@
 
-
-```markdown
 # Symplectic Neural ODEs for Noisy Hamiltonian Systems
 
 A research-level SciML project combining Neural ODEs, Hamiltonian mechanics, and symplectic integration. The central question: **when and why does hard architectural enforcement of conservation laws outperform soft penalty-based approaches as training noise increases?**
@@ -329,6 +327,3 @@ class SymplecticRobotIntegrator:
 
 Regular ML is a blank slate. SciML injects known physics as a structural constraint. It produces scientifically interpretable models where weights map directly to physical quantities, enabling discovery and bounded, predictable hardware deployment.
 
-```
-
-```
